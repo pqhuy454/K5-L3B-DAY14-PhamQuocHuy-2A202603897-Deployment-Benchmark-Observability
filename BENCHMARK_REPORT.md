@@ -46,6 +46,37 @@ Concurrency 20, 300 request, số liệu lấy từ `reports/load_v2_slow_*.json
 
 **Nhận xét:** Khi 3 % request chậm, avg chỉ tăng 47,9 ms (+25 %) và p95 gần như không đổi (213,8 → 219,7), nhưng p99 tăng gần 7,6 lần (222,3 → 1687,8). Khi 10 % request chậm (nhiều hơn 5 %), p95 cũng vọt lên 1696,5 ms và SLO p95 vi phạm, trong khi avg mới là 383,6 ms, trông vẫn "chấp nhận được". Vì vậy p99 nhạy nhất với nhóm request chậm nhỏ, còn p95 chỉ lộ ra khi nhóm đó vượt 5 %. SLO không nên đặt theo average vì average trộn lẫn request nhanh và chậm nên che giấu nhóm người dùng bị chậm; percentile cho biết trải nghiệm của nhóm xấu nhất.
 
+### 2.3 Exercise 7.1: metrics của agent
+
+1. **Ví dụ cho mỗi loại metric** (lấy từ `/metrics` của agent v2):
+   - Counter: `http_requests_total{method="POST",route="/ask",status="200"}` (chỉ tăng, dùng với `rate()`).
+   - Gauge: `agent_in_flight_requests` (số request đang xử lý, lên xuống); `agent_info` cũng là Gauge.
+   - Histogram: `http_request_duration_seconds` (các series `_bucket`, `_sum`, `_count`, dùng với `histogram_quantile()`).
+2. **Nếu dùng URL thật (`request.url.path`) làm label `route`:** mỗi URL lạ do bot quét (`/wp-admin`, `/.env`, `/a1b2c3`) tạo ra một giá trị label mới, nên số time series tăng theo số URL (và nhân thêm với số bucket của histogram) → Prometheus tốn RAM và có thể treo. Dùng `route.path` (template, URL không khớp route nào thì gán `unmatched`) giữ số series nhỏ và cố định.
+3. **Metric `agent_question_length_chars`** (đã thêm vào `develop/app.py`):
+   ```python
+   QUESTION_LENGTH = Histogram(
+       "agent_question_length_chars", "Độ dài câu hỏi (ký tự)",
+       buckets=(20, 50, 100, 200, 500, 1000, 2000),
+   )
+   # trong ask(), trước khi gọi LLM:
+   QUESTION_LENGTH.observe(len(body.question))
+   ```
+   Kiểm tra bằng cách chạy agent v2 cục bộ và gửi 5 câu hỏi dài ngắn khác nhau (đều trả 200); `/metrics` cho kết quả:
+   ```
+   agent_question_length_chars_bucket{le="20.0"} 0.0
+   agent_question_length_chars_bucket{le="50.0"} 2.0
+   agent_question_length_chars_bucket{le="100.0"} 2.0
+   agent_question_length_chars_bucket{le="200.0"} 3.0
+   agent_question_length_chars_bucket{le="500.0"} 3.0
+   agent_question_length_chars_bucket{le="1000.0"} 4.0
+   agent_question_length_chars_bucket{le="2000.0"} 5.0
+   agent_question_length_chars_bucket{le="+Inf"} 5.0
+   agent_question_length_chars_count 5.0
+   agent_question_length_chars_sum 2328.0
+   ```
+   Dùng Histogram, không dùng label `length=...`, vì độ dài có vô số giá trị, nếu làm label thì cardinality bùng nổ. Các file report ở mục 2.1, 2.2 và 3 được chạy trước khi thêm metric này; metric chỉ ghi nhận thêm một giá trị mỗi request nên không đổi hành vi của agent.
+
 ---
 
 ## 3. Benchmark chất lượng (develop, `eval/run_eval.py`)
@@ -114,13 +145,15 @@ Tải nền Locust 30 user, 2 agent sau Nginx. Thời gian đo bằng Prometheus
 |---|---|---|---|---|
 | A | `MOCK_ERROR_RATE=0.2` | `AgentHighErrorRate` (pending sau 29 s) | 89 s (error rate đo được 20,4 %) | Error rate (Golden Signals) |
 | B | `MOCK_SLOW_RATE=0.3` (giữ A) | `AgentHighLatencyP95` (pending sau 27 s) | 147 s (p95 đo được 1,92 s) | p95/p99 latency |
-| C | `LLM_MODEL=mock-llm-large` | Không thực hiện riêng (xem ghi chú) | — | — |
-| D | `docker pause` 1 instance | Không thực hiện | — | — |
+| C | `LLM_MODEL=mock-llm-large` | `LLMCostBurnRateHigh` (pending sau 67 s) | 187 s (đo riêng ở tải 10 user: baseline 0,31 USD/giờ, không alert; sau đổi 6,82 USD/giờ theo cửa sổ 5 phút, 11,02 USD/giờ theo cửa sổ 1 phút, p95 0,68 s) | Cost burn rate / LLM cost (1h) |
+| D | `docker pause` 1 instance | `AgentInstanceDown` (pending sau 11 s) | 41 s | Instances up (Golden Signals) |
 | E | `AGENT_VERSION=v1` | Không có (`AgentInstanceDown` chỉ `pending` thoáng qua lúc container khởi động lại, rồi tự hết) | — (quan sát 4 phút) | tokens/s (input 1317 → 692, output 700 → 375 mỗi giây), bảng version đổi sang v1 |
 
 Ghi chú:
 - Cột "Panel nào phản ánh rõ nhất" cho A và B tôi điền theo thiết kế dashboard (README mục 2.3 và 2.6) và theo câu truy vấn của alert, không phải do đọc lại từ ảnh.
-- Thí nghiệm C không đo sạch được: ngay trước thí nghiệm A, `LLMCostBurnRateHigh` đã firing sẵn. Tải 30 user (~18,6 req/s, ~3,3e-5 USD/request) tương đương khoảng 2,2 USD/giờ, đã vượt ngưỡng 2 USD/giờ, cộng thêm tải 100 user của bài scaling còn trong cửa sổ `rate[5m]`. Alert này tự về inactive sau khi container được tạo lại ở thí nghiệm B vì request chậm làm giảm số request/giây.
+- Thí nghiệm C ban đầu không đo sạch được: ở tải 30 user, `LLMCostBurnRateHigh` đã firing sẵn ngay trước thí nghiệm A (tải 30 user ~18,6 req/s, ~3,3e-5 USD/request tương đương khoảng 2,2 USD/giờ, vượt ngưỡng 2 USD/giờ). Vì vậy tôi đo lại riêng thí nghiệm C ở tải 10 user (6,4 req/s) trên stack mới khởi động, bắt đầu từ trạng thái không alert. Số baseline 0,31 USD/giờ là cửa sổ `rate[5m]` khi stack mới chạy chưa lâu nên có thể thấp hơn trạng thái ổn định.
+- Thí nghiệm D: trong lúc pause, 24 request qua Nginx có 23 trả 200 và 1 trả 504 sau 10,0 s (đúng `proxy_read_timeout 10s`). Error rate phía agent chỉ 1,42 % (lỗi giả lập 1 % của mock), không phản ánh 504 vì request chưa bao giờ được agent xử lý xong; Locust ghi nhận `/ask` lỗi 8,8 % (221/2512) trong cả phiên (gồm các lần tạo lại container). Vì vậy cần giám sát cả ở tầng Nginx hoặc kiểm tra từ bên ngoài. Sau `docker unpause`, số instance `up` trở về 2.
+- `promtool test rules` trên `alert_rules_test.yml`: `SUCCESS`.
 - Sau khi trả về cấu hình mặc định, hai alert A và B hết firing sau khoảng 54 s.
 
 **Thí nghiệm E không làm alert nào firing. Bạn sẽ phát hiện loại sự cố này trong production bằng cách nào?**
@@ -170,7 +203,7 @@ Số liệu lấy từ hàng `Aggregated` của `benchmark-results/scale_1_stats
 - 3 điều bạn học được về benchmark & observability:
   1. Average che giấu tail latency: ở `MOCK_SLOW_RATE=0.03` avg chỉ tăng 25 % nhưng p99 tăng gần 7,6 lần, nên SLO phải đặt theo p95/p99.
   2. Metric hạ tầng không bắt được lỗi chất lượng: đổi sang v1 không alert nào firing dù câu trả lời kém đi, nên cần eval trên golden dataset và quality gate bên cạnh metrics, traces và alerts.
-  3. Kết quả đo phụ thuộc điều kiện thử nghiệm, phải kiểm tra điều kiện trước khi kết luận: scale lên 3 instance không nhanh hơn vì tải bị giới hạn bởi thời gian nghỉ của user, và alert cost đã firing sẵn ở 30 user nên thí nghiệm C không đo sạch được.
+  3. Kết quả đo phụ thuộc điều kiện thử nghiệm, phải kiểm tra điều kiện trước khi kết luận: scale lên 3 instance không nhanh hơn vì tải bị giới hạn bởi thời gian nghỉ của user, và alert cost đã firing sẵn ở 30 user nên tôi phải hạ tải xuống 10 user để đo lại thí nghiệm C.
 - Nếu đưa agent này lên production thật, bạn sẽ thêm metric / alert nào nữa?
 
 Thêm alert chất lượng (eval điểm số trên mẫu traffic thật, tỉ lệ retrieval hit giảm), alert ở tầng Nginx/load balancer cho lỗi 5xx và 504 (vì lỗi này không hiện trên metric của agent), kiểm tra tổng hợp (synthetic probe) từ bên ngoài, alert độ bão hòa (số request đang xử lý `agent_in_flight_requests`), alert p99 bên cạnh p95, và ngân sách chi phí theo ngày thay vì chỉ tốc độ chi tiêu theo giờ. Cũng nên điều chỉnh ngưỡng `LLMCostBurnRateHigh` theo tải bình thường để nó không firing ở trạng thái khỏe mạnh.
