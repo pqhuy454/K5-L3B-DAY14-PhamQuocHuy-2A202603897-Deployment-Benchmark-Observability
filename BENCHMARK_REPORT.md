@@ -131,22 +131,23 @@ Metric hạ tầng (error rate, latency, instance up) chỉ phản ánh việc a
 
 Chọn 1 trace chậm nhất bạn tìm được:
 
-- `trace_id`: `ff0f286815895d9a76e7efa955e35a73`
-- Tổng thời gian: 1715,7 ms
-- Span chiếm nhiều thời gian nhất: `chat mock-llm-small` (1691,7 ms, 98,6 %); các span còn lại: `agent.run` 1713,2 ms (span cha), `agent.retrieve_context` 21,3 ms (1,2 %)
+- `trace_id`: `7cadcda8be7f4fcc1d9a295c23672f32`
+- Tổng thời gian: 1743,4 ms
+- Span chiếm nhiều thời gian nhất: `chat mock-llm-small` (1713,3 ms, 98,3 %); các span còn lại: `agent.run` 1739,2 ms (span cha), `agent.retrieve_context` 25,5 ms (1,5 %)
 - Dòng log tương ứng (grep theo `trace_id`):
 
 ```json
-{"ts": "2026-11-26T10:38:22.782862+00:00", "level": "INFO", "service": "observable-agent", "instance": "69a60aa5be18", "event": "llm_call", "trace_id": "ff0f286815895d9a76e7efa955e35a73", "span_id": "4eb1f84528cce3cf", "request_id": "d88ecc6608c1", "model": "mock-llm-small", "agent_version": "v2", "input_tokens": 74, "output_tokens": 37, "cost_usd": 3.3e-05, "llm_ms": 1690.9}
-{"ts": "2026-11-26T10:38:22.783551+00:00", "level": "INFO", "service": "observable-agent", "instance": "69a60aa5be18", "event": "http_request", "trace_id": "ff0f286815895d9a76e7efa955e35a73", "span_id": "4eb1f84528cce3cf", "request_id": "d88ecc6608c1", "method": "POST", "route": "/ask", "status": 200, "ms": 1714.8}
+{"ts": "2026-11-26T14:41:30.951241+00:00", "level": "INFO", "service": "observable-agent", "instance": "48c7119fc40a", "event": "llm_call", "trace_id": "7cadcda8be7f4fcc1d9a295c23672f32", "span_id": "f788e642881b9303", "request_id": "a31fea711771", "model": "mock-llm-small", "agent_version": "v2", "input_tokens": 83, "output_tokens": 44, "cost_usd": 3.9e-05, "llm_ms": 1668.4}
+{"ts": "2026-11-26T14:41:30.952897+00:00", "level": "INFO", "service": "observable-agent", "instance": "48c7119fc40a", "event": "http_request", "trace_id": "7cadcda8be7f4fcc1d9a295c23672f32", "span_id": "f788e642881b9303", "request_id": "a31fea711771", "method": "POST", "route": "/ask", "status": 200, "ms": 1742.2}
 ```
 
-Nhận xét: request chậm do bước gọi LLM (`llm_ms` 1690,9 ms), không phải do code của agent hay bước retrieval.
+Nhận xét: request chậm do bước gọi LLM, không phải do code của agent hay bước retrieval. Con số `llm_ms` trong log (1668,4 ms) và thời gian span `chat mock-llm-small` (1713,3 ms) lệch nhau khoảng 45 ms; tôi chưa tìm nguyên nhân (có thể hai phép đo bắt đầu và kết thúc ở các điểm khác nhau của luồng gọi), nhưng cả hai đều chỉ ra bước LLM chiếm gần như toàn bộ thời gian. Ảnh: `screenshots/jaeger-slow-trace.png`.
 
-Trace lỗi (cho `jaeger-error-trace.png`): `trace_id` `1601c007f9c384a991f322698c7dbc6c`, 116,9 ms, span `chat mock-llm-small` có event `exception` (`utils.mock_llm.LLMError`: "Upstream LLM error: 503 Service Unavailable (mock)"). Dòng log JSON cùng `trace_id`:
+Trace lỗi (cho `screenshots/jaeger-error-trace.png`): `trace_id` `dee8b9e6724a77945e38481adaaa2164`, tổng 109,2 ms, trả HTTP 503; span `chat mock-llm-small` bị đánh dấu lỗi (92,0 ms) và event `exception` (`utils.mock_llm.LLMError`: "Upstream LLM error: 503 Service Unavailable (mock)") hiển thị trong `Events` của span `agent.run`. Dòng log JSON cùng `trace_id`:
 
 ```json
-{"ts": "2026-11-26T10:38:25.812731+00:00", "level": "INFO", "service": "observable-agent", "instance": "ff9dbdd06a26", "event": "llm_error", "trace_id": "1601c007f9c384a991f322698c7dbc6c", "span_id": "c8264fe6b39f4cbb", "request_id": "504e01a8a8ed", "error": "Upstream LLM error: 503 Service Unavailable (mock)"}
+{"ts": "2026-11-26T14:41:45.090118+00:00", "level": "INFO", "service": "observable-agent", "instance": "48c7119fc40a", "event": "llm_error", "trace_id": "dee8b9e6724a77945e38481adaaa2164", "span_id": "a741fc78ea032c9f", "request_id": "cb6fd519e7fc", "error": "Upstream LLM error: 503 Service Unavailable (mock)"}
+{"ts": "2026-11-26T14:41:45.090335+00:00", "level": "INFO", "service": "observable-agent", "instance": "48c7119fc40a", "event": "http_request", "trace_id": "dee8b9e6724a77945e38481adaaa2164", "span_id": "a741fc78ea032c9f", "request_id": "cb6fd519e7fc", "method": "POST", "route": "/ask", "status": 503, "ms": 108.8}
 ```
 
 ---
