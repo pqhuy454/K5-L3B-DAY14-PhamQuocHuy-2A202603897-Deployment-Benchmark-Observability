@@ -292,3 +292,22 @@ Chạy trong WSL2 (`os.name = posix`), thư mục `06-lab-complete/`, Docker đ�
   🎉 PASS 12/12 — PRODUCTION READY! Deploy nào!
 ```
 Số đo: image 297 MB; build 123 giây; `docker stop` exit code 0 trong 0,7 giây; rate limit trả 429 sau 5 request và vẫn 429 sau khi restart agent.
+
+## AI log
+
+Công cụ hỗ trợ: Claude trong VS Code (dùng để tra cứu khái niệm, gợi ý hướng xử lý `TODO` và gỡ lỗi môi trường).
+
+1. **Part 1, 2, 4, 5 (câu trả lời trong `MISSION_ANSWERS.md`)**
+   - **Hỏi:** Đối chiếu các điểm khác biệt chính giữa bản `develop/` và `production/`, gợi ý cách diễn đạt ngắn gọn cho các câu hỏi lý thuyết.
+   - **Nhận:** Gợi ý dàn ý giải thích các anti-pattern, cơ chế multi-stage Docker, rate limit/cost guard và stateless session.
+   - **Tự sửa & kiểm tra:** Tự biên tập lại câu trả lời sát code thực tế; trực tiếp đối chiếu mọi con số và mã HTTP từ kết quả chạy trên WSL2 (`docker images` 1,67 GB vs 240 MB; `curl -i` trả 401/403/200/429; `test_stateless.py`).
+
+2. **Part 6 (`06-lab-complete/`) & Part 3 (Deploy Render)**
+   - **Hỏi:** Gợi ý triển khai các `TODO` (sliding-window rate limit và cost guard trên Redis, cấu hình multi-stage `Dockerfile`, `render.yaml`) và cách xử lý lỗi `pydantic-core` trên Python 3.14.
+   - **Nhận:** Mẫu code cho các module trong `app/`, cấu hình container/deploy và gợi ý tạo môi trường Python 3.11 riêng bằng `uv`.
+   - **Tự sửa & kiểm tra:** Rà soát và chốt các chi tiết thiết kế (băm API key trước khi lưu khóa Redis, tính hạn mức chi phí theo ngày vì `check_budget()` không nhận `user_id`, trả 503 khi mất kết nối Redis để không lộ stack trace, giữ cơ chế nhận `SIGTERM` mặc định của Uvicorn). Tự cấu hình Web Service + Key Value trên Render, chạy kiểm tra `/health`, `/ready`, `/ask` và chạy `python check_production_ready.py` đạt `PASS 12/12` (image 297 MB).
+
+3. **Part 7 (`BENCHMARK_REPORT.md` & Observability stack)**
+   - **Hỏi:** Hỗ trợ chẩn đoán lỗi container thiếu `uvicorn` ở `production/Dockerfile`, gợi ý cú pháp lấy thông tin từ Prometheus/Jaeger API và góp ý cách trình bày nhận xét báo cáo.
+   - **Nhận:** Nguyên nhân thiếu biến `ENV PYTHONUSERBASE=/home/agent/.local`, gợi ý bổ sung từ khóa cho `KNOWLEDGE_BASE` (bám theo hướng dẫn Exercise 7.3) và dàn ý phân tích p95/p99, scaling.
+   - **Tự sửa & kiểm tra:** Thêm dòng sửa `PYTHONUSERBASE` vào `production/Dockerfile`, kiểm tra kết quả eval đạt `23/23` (0 regression, kiểm tra cả exit code khi fail gate), tự chụp các dashboard trên trình duyệt và đối chiếu toàn bộ số liệu trong `BENCHMARK_REPORT.md` khớp với các file JSON/CSV thực chạy.
