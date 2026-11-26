@@ -89,6 +89,41 @@ Trạng thái sau khi lên: agent, redis, qdrant đều `healthy`, nginx `Up`. T
 
 Đã dọn bằng `docker compose -p k5-day14-docker down -v`.
 
+## Part 3: Cloud Deployment
+
+### Exercise 3.1: Railway deployment
+Không deploy Railway. Nền tảng chính tôi chọn là Render (Exercise 3.2), nền tảng còn lại được thay bằng so sánh cấu hình ở bên dưới (theo RUBRIC).
+
+### Exercise 3.2: Render deployment
+- URL: https://day14-agent-3k1q.onrender.com
+- Deploy đúng agent Part 6 (`06-lab-complete/`), Web Service Docker + Render Key Value (Redis) cùng region Singapore, Health Check Path `/health`, biến môi trường đặt trên dashboard.
+- Kiểm tra: `/health` 200, `/ready` 200, `/ask` không key 401, `/ask` có key 200 (chi tiết trong `DEPLOYMENT.md`).
+- Screenshot: [dashboard](screenshots/dashboard.png), [running](screenshots/running.png), [test](screenshots/test.png)
+- Ghi chú: tạo bằng Blueprint từ `render.yaml` bị Render yêu cầu thông tin thanh toán, nên tôi tạo hai dịch vụ thủ công với cấu hình tương đương.
+
+### So sánh `railway.toml` với `render.yaml`
+So sánh `03-cloud-deployment/railway/railway.toml` với `03-cloud-deployment/render/render.yaml`:
+
+| Điểm | `railway.toml` | `render.yaml` |
+|---|---|---|
+| Phạm vi | Chỉ cấu hình build/deploy của một service | Blueprint khai báo cả hạ tầng: web service và Redis (`type: redis`) |
+| Build | `[build] builder = "NIXPACKS"` (tự nhận diện Python, hoặc Dockerfile) | `runtime: python`, `buildCommand`, `startCommand` |
+| Health check | `healthcheckPath = "/health"`, `healthcheckTimeout = 30` | `healthCheckPath: /health` |
+| Restart | `restartPolicyType = "ON_FAILURE"`, tối đa 3 lần | Render tự restart khi health check lỗi, không khai báo trong file |
+| Region, gói | Không có trong file | `region: singapore`, `plan: free` |
+| Biến môi trường | Đặt bằng CLI/dashboard (`railway variables set`), file chỉ nhắc | Khai báo ngay trong file: giá trị cố định, `sync: false` (nhập tay), `generateValue: true` (Render tự sinh) |
+| Auto deploy | Mặc định theo repo, không khai báo | `autoDeploy: true` |
+
+Vì sao khác: Railway coi file là cấu hình theo từng service, còn hạ tầng (database, Redis) thêm riêng qua dashboard/CLI. Render dùng Blueprint (infrastructure as code) nên một file mô tả cả web service và Redis, cùng cách sinh secret. Hệ quả thực tế: với Render phải chú ý Redis và secret ngay trong file, còn Railway thì phải tạo Redis ngoài file.
+
+### Exercise 3.3: GCP Cloud Run (chỉ đọc, không deploy)
+Đọc `03-cloud-deployment/production-cloud-run/cloudbuild.yaml` và `service.yaml`. Pipeline CI/CD chạy khi push lên `main`:
+1. Test: chạy `pytest tests/` trong image `python:3.11-slim`.
+2. Build: `docker build` gắn tag `$COMMIT_SHA` và `latest`, dùng `--cache-from` để tận dụng layer cache.
+3. Push: đẩy image lên `gcr.io/$PROJECT_ID/ai-agent`.
+4. Deploy: `gcloud run deploy` lên Cloud Run vùng `asia-southeast1`, public (`--allow-unauthenticated`), `min-instances=1`, `max-instances=10`, secret lấy từ Secret Manager (`--set-secrets`).
+`service.yaml` khai báo service ở dạng Knative: scale 1 đến 10 instance, mỗi instance tối đa 80 request đồng thời, giới hạn CPU/RAM, secret qua `secretKeyRef`, `livenessProbe` gọi `/health` và `startupProbe` gọi `/ready`. Mỗi lần deploy dùng image gắn commit SHA nên có thể truy vết và rollback.
+
 ## Part 4: API Security
 
 ### Exercise 4.1: API Key authentication
