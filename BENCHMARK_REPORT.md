@@ -95,6 +95,17 @@ v2 dùng retrieval nên prompt dài hơn: token trung bình mỗi câu tăng t�
 - [x] Một trace lỗi trong Jaeger (có event `exception`) — `screenshots/jaeger-error-trace.png`
 - [x] Trang Alerts của Prometheus với ít nhất 1 alert đang **firing** — `screenshots/prometheus-alert-firing.png` (2 alert cùng firing: `AgentHighErrorRate`, `AgentHighLatencyP95`)
 
+### 4.1b Trả lời Exercise 7.4
+
+Đo lại trên stack 2 agent sau Nginx, tải Locust 30 user trong 90 giây, số liệu lấy từ Prometheus API.
+
+1. **p95 và avg đang là bao nhiêu? Khoảng cách giữa chúng nói lên điều gì?** Với `/ask`: avg 0,229 s, p50 0,178 s, p95 0,293 s, p99 1,804 s. avg (229 ms) cao hơn p50 (178 ms) khoảng 50 ms nên phân phối lệch phải: phần lớn request nhanh, một nhóm nhỏ chậm bất thường kéo trung bình lên. Nhóm đó nằm ở đuôi p99 (1,8 s, gấp ~10 lần p50) chứ chưa đủ lớn để làm p95 tăng mạnh. Vì vậy chỉ nhìn avg hoặc p95 sẽ không thấy; cần theo dõi cả p99.
+2. **Panel "Requests/s theo instance": Nginx có chia đều traffic cho 2 instance không?** Có. 40 request qua Nginx: 20 đến mỗi instance (`X-Served-By`). Prometheus đo 8,75 và 8,65 req/s cho hai instance, chênh khoảng 1 %. Nginx chia theo round-robin mặc định và dùng DNS của Docker để tìm hai instance.
+3. **Vì sao input tokens/s lớn hơn output tokens/s?** Đo được input 638,4 và output 339,5 tokens/s (gấp ~1,9 lần). Prompt gồm system prompt, tài liệu retrieval (agent v2) và câu hỏi, còn câu trả lời ngắn hơn nhiều, nên mỗi request tiêu nhiều token đầu vào hơn token đầu ra.
+4. **`curl http://localhost:8080/metrics` trả về gì? Vì sao?** Trả về `404 Not Found`. `nginx.conf` có khối `location = /metrics { return 404; }`: endpoint này lộ thông tin hệ thống (route, lưu lượng, version, model) nên không public ra ngoài. Prometheus vẫn đọc được vì scrape trực tiếp từng agent trong mạng nội bộ (gọi `agent:8000/metrics`, không qua Nginx).
+
+Lưu ý: đây là lần đo riêng cho Exercise 7.4 (30 user, 90 giây), nên các số p95 và tokens/s hơi khác lần chạy thí nghiệm ở mục 4.2 (tải và độ dài cửa sổ không giống nhau).
+
 ### 4.2 Thí nghiệm "phá hệ thống"
 
 Tải nền Locust 30 user, 2 agent sau Nginx. Thời gian đo bằng Prometheus API (`/api/v1/alerts`) từ lúc chạy lệnh đổi cấu hình, đã gồm thời gian tạo lại container (~3 s).
